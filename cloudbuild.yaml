@@ -1,0 +1,26 @@
+steps:
+# Step 1: Build the container image
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['build', '-t', 'gcr.io/ms-gcu-dissertation/bert-sentiment', '.']
+  dir: 'bert_service' # Assuming your Dockerfile is in the bert_service directory
+
+# Step 2: Push the container image to Container Registry
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/ms-gcu-dissertation/bert-sentiment']
+
+# Step 3: Deploy the container image to Cloud Run
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: gcloud
+  args:
+    - 'run'
+    - 'deploy'
+    - 'bert-sentiment-service'
+    - '--image=gcr.io/ms-gcu-dissertation/bert-sentiment'
+    - '--region=us-central1'
+    - '--platform=managed'
+    - '--allow-unauthenticated'
+    - '--memory=2Gi'
+    - '--cpu=2'
+
+images:
+- 'gcr.io/ms-gcu-dissertation/bert-sentiment'
