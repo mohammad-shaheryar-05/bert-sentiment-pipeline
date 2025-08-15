@@ -1,0 +1,29 @@
+# .gcloudignore
+
+# This file tells gcloud to ignore these files and directories when uploading.
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+venv/
+env/
+.env
+
+# Common editor/OS files
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Git
+.git/
+
+# Any local data or downloaded models you don't need in the build
+# For example, if you have a 'data' or 'models' folder:
+# data/
+# models/
+
+# Gcloud specific files
+.gcloudignore

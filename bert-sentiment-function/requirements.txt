@@ -1,0 +1,7 @@
+functions-framework>=3.0
+google-cloud-storage>=2.10.0
+google-cloud-error-reporting>=1.9.0
+google-cloud-monitoring>=2.15.0
+google-cloud-pubsub>=2.18.0
+google-cloud-aiplatform>=1.35.0
+requests>=2.31.0

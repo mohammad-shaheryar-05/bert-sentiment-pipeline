@@ -1,0 +1,15 @@
+displayName: "Low Confidence Alert" 
+combiner: OR 
+conditions: 
+  - displayName: "Average confidence below threshold" 
+    conditionThreshold: 
+      filter: 'resource.type="global" AND metric.type="custom.googleapis.com/bert/avg_confidence"' 
+      comparison: COMPARISON_LT 
+      thresholdValue: 0.7 
+      duration: 300s 
+      aggregations: 
+        - alignmentPeriod: 600s 
+          perSeriesAligner: ALIGN_MEAN 
+notificationChannels: [] 
+alertStrategy: 
+  autoClose: 86400s

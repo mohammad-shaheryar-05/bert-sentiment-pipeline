@@ -1,0 +1,15 @@
+displayName: "BERT Model Drift Alert" 
+combiner: OR 
+conditions: 
+  - displayName: "High drift detected" 
+    conditionThreshold: 
+      filter: 'resource.type="global" AND metric.type="custom.googleapis.com/bert/drift_detected"' 
+      comparison: COMPARISON_GT 
+      thresholdValue: 0 
+      duration: 60s 
+      aggregations: 
+        - alignmentPeriod: 300s 
+          perSeriesAligner: ALIGN_MAX 
+notificationChannels: [] 
+alertStrategy: 
+  autoClose: 86400s

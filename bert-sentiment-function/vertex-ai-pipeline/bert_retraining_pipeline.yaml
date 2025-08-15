@@ -1,0 +1,400 @@
+# PIPELINE DEFINITION
+# Name: bert-sentiment-retraining-pipeline
+# Description: Automated BERT sentiment model retraining pipeline
+# Inputs:
+#    base_model_path: str [Default: 'bert-base-uncased']
+#    bucket_name: str [Default: 'ms-gcu-dissertation-bert-predictions']
+#    dataset_name: str [Default: 'bert_predictions']
+#    days_back: int [Default: 30.0]
+#    project_id: str [Default: 'ms-gcu-dissertation']
+# Outputs:
+#    Output: str
+components:
+  comp-deploy-model-to-cloud-run:
+    executorLabel: exec-deploy-model-to-cloud-run
+    inputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        bucket_name:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        deployment_status:
+          parameterType: STRING
+        model_uploaded:
+          parameterType: STRING
+  comp-extract-training-data:
+    executorLabel: exec-extract-training-data
+    inputDefinitions:
+      parameters:
+        dataset_name:
+          parameterType: STRING
+        days_back:
+          parameterType: NUMBER_INTEGER
+        project_id:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        output_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        Output:
+          parameterType: STRUCT
+  comp-prepare-training-data:
+    executorLabel: exec-prepare-training-data
+    inputDefinitions:
+      artifacts:
+        input_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        train_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        val_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        Output:
+          parameterType: STRUCT
+  comp-retrain-bert-model:
+    executorLabel: exec-retrain-bert-model
+    inputDefinitions:
+      artifacts:
+        train_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        val_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        base_model_path:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        metrics_output:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        model_output:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        Output:
+          parameterType: STRUCT
+deploymentSpec:
+  executors:
+    exec-deploy-model-to-cloud-run:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - deploy_model_to_cloud_run
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-storage>=2.10.0'\
+          \ 'pandas>=2.0.0'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.14.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef deploy_model_to_cloud_run(\n    model: Input[Model],\n    bucket_name:\
+          \ str\n) -> NamedTuple(\"Outputs\", [(\"model_uploaded\", str), (\"deployment_status\"\
+          , str)]):\n    \"\"\"Deploy retrained model to Cloud Run.\"\"\"\n    from\
+          \ google.cloud import storage\n    import zipfile, tempfile, os, pandas\
+          \ as pd\n\n    storage_client = storage.Client()\n    bucket = storage_client.bucket(bucket_name)\n\
+          \    with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as temp_zip:\n\
+          \        with zipfile.ZipFile(temp_zip, 'w') as zipf:\n            for root,\
+          \ _, files in os.walk(model.path):\n                for file in files:\n\
+          \                    file_path, arcname = os.path.join(root, file), os.path.relpath(file_path,\
+          \ model.path)\n                    zipf.write(file_path, arcname)\n    \
+          \    temp_zip_path = temp_zip.name\n\n    blob = bucket.blob(f\"models/retrained_bert_{int(pd.Timestamp.now().timestamp())}.zip\"\
+          )\n    blob.upload_from_filename(temp_zip_path)\n    os.unlink(temp_zip_path)\n\
+          \n    model_gcs_path = f\"gs://{bucket_name}/{blob.name}\"\n    deployment_status\
+          \ = \"model_uploaded_ready_for_deployment\"\n\n    return (model_gcs_path,\
+          \ deployment_status)\n\n"
+        image: python:3.10
+    exec-extract-training-data:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - extract_training_data
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery>=3.11.0'\
+          \ 'google-cloud-storage>=2.10.0' 'transformers>=4.30.0' 'torch>=2.0.0' 'scikit-learn>=1.3.0'\
+          \ 'pandas>=2.0.0' 'db-dtypes'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.14.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef extract_training_data(\n    project_id: str,\n    dataset_name:\
+          \ str,\n    days_back: int,\n    output_data: Output[Dataset]\n) -> dict:\n\
+          \    \"\"\"Extract recent prediction data for retraining.\"\"\"\n    import\
+          \ pandas as pd\n    from google.cloud import bigquery\n    import json\n\
+          \n    client = bigquery.Client(project=project_id)\n    query = f\"\"\"\n\
+          \    SELECT review_text, predicted_sentiment, confidence, timestamp\n  \
+          \  FROM `{project_id}.{dataset_name}.prediction_history`\n    WHERE timestamp\
+          \ >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL {days_back} DAY) AND confidence\
+          \ < 0.7\n    ORDER BY timestamp DESC LIMIT 10000\n    \"\"\"\n    df = client.query(query).to_dataframe()\n\
+          \    df.to_csv(output_data.path, index=False)\n    stats = {\n        \"\
+          total_samples\": len(df),\n        \"sentiment_distribution\": df['predicted_sentiment'].value_counts().to_dict(),\n\
+          \        \"avg_confidence\": float(df['confidence'].mean())\n    }\n   \
+          \ return stats\n\n"
+        image: python:3.10
+    exec-prepare-training-data:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - prepare_training_data
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'transformers>=4.30.0'\
+          \ 'torch>=2.0.0' 'scikit-learn>=1.3.0' 'pandas>=2.0.0' 'datasets>=2.14.0'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef prepare_training_data(\n    input_data: Input[Dataset],\n   \
+          \ train_data: Output[Dataset],\n    val_data: Output[Dataset]\n) -> dict:\n\
+          \    \"\"\"Prepare and split data for retraining.\"\"\"\n    import pandas\
+          \ as pd\n    from sklearn.model_selection import train_test_split\n\n  \
+          \  df = pd.read_csv(input_data.path)\n    label_map = {\"Positive\": 2,\
+          \ \"Neutral\": 1, \"Negative\": 0}\n    df['label'] = df['predicted_sentiment'].map(label_map)\n\
+          \    train_df, val_df = train_test_split(df, test_size=0.2, random_state=42,\
+          \ stratify=df['label'])\n    train_df.to_csv(train_data.path, index=False)\n\
+          \    val_df.to_csv(val_data.path, index=False)\n    return {\"train_samples\"\
+          : len(train_df), \"val_samples\": len(val_df), \"classes\": list(label_map.keys())}\n\
+          \n"
+        image: python:3.10
+    exec-retrain-bert-model:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - retrain_bert_model
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'transformers>=4.30.0'\
+          \ 'torch>=2.0.0' 'scikit-learn>=1.3.0' 'pandas>=2.0.0' 'datasets>=2.14.0'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef retrain_bert_model(\n    train_data: Input[Dataset],\n    val_data:\
+          \ Input[Dataset],\n    base_model_path: str,\n    model_output: Output[Model],\n\
+          \    metrics_output: Output[Metrics]\n) -> dict:\n    \"\"\"Retrain BERT\
+          \ model with new data.\"\"\"\n    import pandas as pd\n    import torch\n\
+          \    from transformers import (BertTokenizer, BertForSequenceClassification,\
+          \ Trainer, TrainingArguments, DataCollatorWithPadding)\n    from torch.utils.data\
+          \ import Dataset as TorchDataset\n    from sklearn.metrics import accuracy_score,\
+          \ precision_recall_fscore_support\n    import json\n\n    class SentimentDataset(TorchDataset):\n\
+          \        def __init__(self, texts, labels, tokenizer, max_length=128):\n\
+          \            self.texts, self.labels, self.tokenizer, self.max_length =\
+          \ texts, labels, tokenizer, max_length\n        def __len__(self): return\
+          \ len(self.texts)\n        def __getitem__(self, idx):\n            text\
+          \ = str(self.texts.iloc[idx])\n            encoding = self.tokenizer(text,\
+          \ truncation=True, padding='max_length', max_length=self.max_length, return_tensors='pt')\n\
+          \            return {'input_ids': encoding['input_ids'].flatten(), 'attention_mask':\
+          \ encoding['attention_mask'].flatten(), 'labels': torch.tensor(self.labels.iloc[idx],\
+          \ dtype=torch.long)}\n\n    train_df, val_df = pd.read_csv(train_data.path),\
+          \ pd.read_csv(val_data.path)\n    tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')\n\
+          \    model = BertForSequenceClassification.from_pretrained('bert-base-uncased',\
+          \ num_labels=3)\n    train_dataset, val_dataset = SentimentDataset(train_df['review_text'],\
+          \ train_df['label'], tokenizer), SentimentDataset(val_df['review_text'],\
+          \ val_df['label'], tokenizer)\n\n    def compute_metrics(eval_pred):\n \
+          \       predictions, labels = eval_pred; predictions = predictions.argmax(axis=-1)\n\
+          \        precision, recall, f1, _ = precision_recall_fscore_support(labels,\
+          \ predictions, average='weighted')\n        return {'accuracy': accuracy_score(labels,\
+          \ predictions), 'f1': f1, 'precision': precision, 'recall': recall}\n\n\
+          \    trainer = Trainer(model=model, args=TrainingArguments(output_dir='/tmp/retrained_model',\
+          \ num_train_epochs=2, per_device_train_batch_size=16, logging_steps=100,\
+          \ evaluation_strategy=\"epoch\", save_strategy=\"epoch\", load_best_model_at_end=True,\
+          \ metric_for_best_model=\"eval_accuracy\"), train_dataset=train_dataset,\
+          \ eval_dataset=val_dataset, tokenizer=tokenizer, data_collator=DataCollatorWithPadding(tokenizer),\
+          \ compute_metrics=compute_metrics)\n    training_result = trainer.train()\n\
+          \    eval_result = trainer.evaluate()\n    model.save_pretrained(model_output.path)\n\
+          \    tokenizer.save_pretrained(model_output.path)\n    metrics = {\"eval_accuracy\"\
+          : float(eval_result[\"eval_accuracy\"]), \"eval_f1\": float(eval_result[\"\
+          eval_f1\"])}\n    with open(f\"{metrics_output.path}/metrics.json\", \"\
+          w\") as f: json.dump(metrics, f)\n    return metrics\n\n"
+        image: python:3.10
+pipelineInfo:
+  description: Automated BERT sentiment model retraining pipeline
+  name: bert-sentiment-retraining-pipeline
+root:
+  dag:
+    outputs:
+      parameters:
+        Output:
+          valueFromParameter:
+            outputParameterKey: model_uploaded
+            producerSubtask: deploy-model-to-cloud-run
+    tasks:
+      deploy-model-to-cloud-run:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-deploy-model-to-cloud-run
+        dependentTasks:
+        - retrain-bert-model
+        inputs:
+          artifacts:
+            model:
+              taskOutputArtifact:
+                outputArtifactKey: model_output
+                producerTask: retrain-bert-model
+          parameters:
+            bucket_name:
+              componentInputParameter: bucket_name
+        taskInfo:
+          name: deploy-model-to-cloud-run
+      extract-training-data:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-extract-training-data
+        inputs:
+          parameters:
+            dataset_name:
+              componentInputParameter: dataset_name
+            days_back:
+              componentInputParameter: days_back
+            project_id:
+              componentInputParameter: project_id
+        taskInfo:
+          name: extract-training-data
+      prepare-training-data:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-prepare-training-data
+        dependentTasks:
+        - extract-training-data
+        inputs:
+          artifacts:
+            input_data:
+              taskOutputArtifact:
+                outputArtifactKey: output_data
+                producerTask: extract-training-data
+        taskInfo:
+          name: prepare-training-data
+      retrain-bert-model:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-retrain-bert-model
+        dependentTasks:
+        - prepare-training-data
+        inputs:
+          artifacts:
+            train_data:
+              taskOutputArtifact:
+                outputArtifactKey: train_data
+                producerTask: prepare-training-data
+            val_data:
+              taskOutputArtifact:
+                outputArtifactKey: val_data
+                producerTask: prepare-training-data
+          parameters:
+            base_model_path:
+              componentInputParameter: base_model_path
+        taskInfo:
+          name: retrain-bert-model
+  inputDefinitions:
+    parameters:
+      base_model_path:
+        defaultValue: bert-base-uncased
+        isOptional: true
+        parameterType: STRING
+      bucket_name:
+        defaultValue: ms-gcu-dissertation-bert-predictions
+        isOptional: true
+        parameterType: STRING
+      dataset_name:
+        defaultValue: bert_predictions
+        isOptional: true
+        parameterType: STRING
+      days_back:
+        defaultValue: 30.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      project_id:
+        defaultValue: ms-gcu-dissertation
+        isOptional: true
+        parameterType: STRING
+  outputDefinitions:
+    parameters:
+      Output:
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.14.2
