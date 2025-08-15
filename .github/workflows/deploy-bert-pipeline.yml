@@ -1,0 +1,148 @@
+name: BERT Sentiment Pipeline CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  PROJECT_ID: ms-gcu-dissertation
+  REGION: us-central1
+  SERVICE_NAME: bert-sentiment-service
+  FUNCTION_NAME: bert-sentiment-processor
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install pytest requests
+    
+    - name: Run tests
+      run: |
+        python -m pytest tests/ -v
+    
+    - name: Test model loading
+      run: |
+        python -c "
+        from transformers import BertTokenizer, BertForSequenceClassification
+        import torch
+        try:
+            tokenizer = BertTokenizer.from_pretrained('.')
+            model = BertForSequenceClassification.from_pretrained('.')
+            print(' Model files loaded successfully')
+        except Exception as e:
+            print(f' Model loading failed: {e}')
+            exit(1)
+        "
+
+  build-and-deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Google Cloud CLI
+      uses: google-github-actions/setup-gcloud@v1
+      with:
+        service_account_key: ${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}
+        project_id: ${{ env.PROJECT_ID }}
+    
+    - name: Configure Docker for GCR
+      run: gcloud auth configure-docker
+    
+    - name: Build and Push Docker Image
+      run: |
+        # Build with model files
+        docker build -t gcr.io/$PROJECT_ID/$SERVICE_NAME:$GITHUB_SHA .
+        docker push gcr.io/$PROJECT_ID/$SERVICE_NAME:$GITHUB_SHA
+        
+        # Also tag as latest
+        docker tag gcr.io/$PROJECT_ID/$SERVICE_NAME:$GITHUB_SHA gcr.io/$PROJECT_ID/$SERVICE_NAME:latest
+        docker push gcr.io/$PROJECT_ID/$SERVICE_NAME:latest
+    
+    - name: Deploy to Cloud Run
+      run: |
+        gcloud run deploy $SERVICE_NAME \
+          --image gcr.io/$PROJECT_ID/$SERVICE_NAME:$GITHUB_SHA \
+          --platform managed \
+          --region $REGION \
+          --allow-unauthenticated \
+          --memory 4Gi \
+          --cpu 2 \
+          --timeout 300 \
+          --max-instances 10 \
+          --set-env-vars="MODEL_VERSION=$GITHUB_SHA"
+    
+    - name: Deploy Cloud Function
+      run: |
+        # Get the new service URL
+        SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format="value(status.url)")
+        
+        # Deploy function with updated URL
+        gcloud functions deploy $FUNCTION_NAME \
+          --gen2 \
+          --runtime=python311 \
+          --region=$REGION \
+          --source=./cloud-function \
+          --entry-point=bert_sentiment_processor \
+          --trigger-topic=bert-sentiment-requests \
+          --timeout=540 \
+          --memory=1GB \
+          --max-instances=10 \
+          --set-env-vars="BERT_API_URL=$SERVICE_URL,BUCKET_NAME=ms-gcu-dissertation-bert-predictions,MODEL_VERSION=$GITHUB_SHA"
+    
+    - name: Run Integration Tests
+      run: |
+        # Wait for deployment to be ready
+        sleep 30
+        
+        # Test the API endpoint
+        SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format="value(status.url)")
+        
+        # Test health endpoint
+        curl -f "$SERVICE_URL/" || exit 1
+        
+        # Test prediction endpoint
+        curl -f -X POST "$SERVICE_URL/predict" \
+          -H "Content-Type: application/json" \
+          -d '{"review_text": "This is a test review for CI/CD pipeline"}' || exit 1
+        
+        echo " Integration tests passed"
+    
+    - name: Update Model Registry
+      run: |
+        # Store model metadata in Cloud Storage
+        echo "{
+          \"model_version\": \"$GITHUB_SHA\",
+          \"deployment_time\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+          \"git_commit\": \"$GITHUB_SHA\",
+          \"branch\": \"$GITHUB_REF_NAME\",
+          \"service_url\": \"$(gcloud run services describe $SERVICE_NAME --region=$REGION --format='value(status.url)')\"
+        }" | gsutil cp - gs://ms-gcu-dissertation-bert-predictions/models/deployments/$GITHUB_SHA.json
+
+  notify:
+    needs: [build-and-deploy]
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+    - name: Notify Deployment Status
+      run: |
+        if [ "${{ needs.build-and-deploy.result }}" == "success" ]; then
+          echo " Deployment successful for commit $GITHUB_SHA"
+        else
+          echo " Deployment failed for commit $GITHUB_SHA"
+          exit 1
+        fi
