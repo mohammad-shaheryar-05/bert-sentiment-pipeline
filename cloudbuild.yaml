@@ -1,8 +1,8 @@
 # This is the final, complete Cloud Build configuration file for your CI/CD pipeline.
-# It now points to the correct source code directories.
+# It now points to the final, correct source code directories.
 
 steps:
-# --- Stage 1: Build and Deploy the BERT Sentiment API (Cloud Run Service) ---
+# --- Stage 1: Deploy the BERT Sentiment API (Cloud Run Service) ---
 
 # This step deploys the final, working API code from the 'bert-api-fix' directory.
 - name: 'gcr.io/cloud-builders/gcloud'
