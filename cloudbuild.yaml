@@ -1,51 +1,41 @@
 # This is the final, complete Cloud Build configuration file for your CI/CD pipeline.
+# It now points to the correct source code directories.
 
 steps:
 # --- Stage 1: Build and Deploy the BERT Sentiment API (Cloud Run Service) ---
 
-# 1a. Build the container image for the API
-# The 'dir' property tells Cloud Build to run this command inside the 'bert_service' folder.
-- name: 'gcr.io/cloud-builders/docker'
-  args: ['build', '-t', 'gcr.io/$PROJECT_ID/bert-sentiment-api', '.']
-  dir: 'bert_service'
-
-# 1b. Push the container image to Google Container Registry
-- name: 'gcr.io/cloud-builders/docker'
-  args: ['push', 'gcr.io/$PROJECT_ID/bert-sentiment-api']
-
-# 1c. Deploy the new container image to Cloud Run
-# This step uses the image we just built and pushed.
+# This step deploys the final, working API code from the 'bert-api-fix' directory.
 - name: 'gcr.io/cloud-builders/gcloud'
   args:
-    - 'run'
-    - 'deploy'
-    - 'bert-sentiment-service' # This is the name of your Cloud Run service
-    - '--image=gcr.io/$PROJECT_ID/bert-sentiment-api'
-    - '--region=us-central1'
-    - '--platform=managed'
-    - '--allow-unauthenticated'
-    - '--memory=2Gi'
-    - '--cpu=2'
+  - 'run'
+  - 'deploy'
+  - 'bert-sentiment-service'
+  - '--source'
+  - './bert-sentiment-function/vertex-ai-pipeline/bert-api-fix' # <-- CORRECTED PATH
+  - '--region'
+  - 'us-central1'
+  - '--platform'
+  - 'managed'
+  - '--allow-unauthenticated'
+  - '--memory=2Gi'
+  - '--cpu=2'
 
 # --- Stage 2: Deploy the Sentiment Processor (Cloud Function) ---
 
-# This single step handles the build and deployment for the function.
-# It looks for the source code in the 'bert-sentiment-function' folder.
+# This step deploys the final, working function code from the 'cloud-function' directory.
 - name: 'gcr.io/cloud-builders/gcloud'
   args:
-    - 'functions'
-    - 'deploy'
-    - 'bert-sentiment-processor' # This is the name of your Cloud Function
-    - '--gen2'
-    - '--runtime=python311'
-    - '--region=us-central1'
-    - '--source=./bert-sentiment-function' # The source folder for your function
-    - '--entry-point=bert_sentiment_processor'
-    - '--trigger-topic=bert-sentiment-requests'
-
-# This is a list of the final container images that this build will produce.
-images:
-- 'gcr.io/$PROJECT_ID/bert-sentiment-api'
+  - 'functions'
+  - 'deploy'
+  - 'bert-sentiment-processor'
+  - '--gen2'
+  - '--runtime=python311'
+  - '--region'
+  - 'us-central1'
+  - '--source=./bert-sentiment-function/vertex-ai-pipeline/cloud-function' # <-- CORRECTED PATH
+  - '--entry-point=bert_sentiment_processor'
+  - '--trigger-topic=bert-sentiment-requests'
+  - '--set-env-vars=BERT_API_URL=https://bert-sentiment-service-121496194098.us-central1.run.app,BUCKET_NAME=ms-gcu-dissertation-bert-predictions'
 
 # This setting tells Cloud Build to only store the logs in Google Cloud Logging.
 options:
