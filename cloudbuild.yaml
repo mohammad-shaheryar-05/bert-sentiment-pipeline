@@ -1,17 +1,17 @@
 # This is the final, complete Cloud Build configuration file for your CI/CD pipeline.
-# It now points to the final, correct source code directories.
+# It now points to the final, correct source code directories as they exist in your GitHub repository.
 
 steps:
 # --- Stage 1: Deploy the BERT Sentiment API (Cloud Run Service) ---
 
-# This step deploys the final, working API code from the 'bert-api-fix' directory.
+# This step deploys the final, working API code from the 'bert_service' directory.
 - name: 'gcr.io/cloud-builders/gcloud'
   args:
   - 'run'
   - 'deploy'
   - 'bert-sentiment-service'
   - '--source'
-  - './bert-sentiment-function/vertex-ai-pipeline/bert-api-fix' # <-- CORRECTED PATH
+  - './bert_service' # <-- CORRECTED PATH
   - '--region'
   - 'us-central1'
   - '--platform'
@@ -22,7 +22,7 @@ steps:
 
 # --- Stage 2: Deploy the Sentiment Processor (Cloud Function) ---
 
-# This step deploys the final, working function code from the 'cloud-function' directory.
+# This step deploys the final, working function code from the 'bert-sentiment-function' directory.
 - name: 'gcr.io/cloud-builders/gcloud'
   args:
   - 'functions'
@@ -32,7 +32,7 @@ steps:
   - '--runtime=python311'
   - '--region'
   - 'us-central1'
-  - '--source=./bert-sentiment-function/vertex-ai-pipeline/cloud-function' # <-- CORRECTED PATH
+  - '--source=./bert-sentiment-function' # <-- CORRECTED PATH
   - '--entry-point=bert_sentiment_processor'
   - '--trigger-topic=bert-sentiment-requests'
   - '--set-env-vars=BERT_API_URL=https://bert-sentiment-service-121496194098.us-central1.run.app,BUCKET_NAME=ms-gcu-dissertation-bert-predictions'
