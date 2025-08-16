@@ -1,5 +1,5 @@
 # PIPELINE DEFINITION
-# Name: bert-sentiment-retraining-pipeline
+# Name: bert-sentiment-retraining-pipeline-v2
 # Inputs:
 #    base_model_path: str [Default: 'distilbert-base-uncased']
 #    bucket_name: str [Default: 'YOUR_BUCKET_NAME_HERE']
@@ -120,15 +120,14 @@ deploymentSpec:
           '
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef deploy_model_to_gcs(model: Input[Model], bucket_name: str) ->\
-          \ dict:\n    \"\"\"Uploads the model directory to gs://{bucket_name}/retrained_bert/\
-          \ .\"\"\"\n    import os\n    from google.cloud import storage\n\n    client\
-          \ = storage.Client()\n    bucket = client.bucket(bucket_name)\n\n    prefix\
-          \ = \"retrained_bert/\"\n    uploaded = 0\n    for root, _, files in os.walk(model.path):\n\
-          \        for f in files:\n            local_path = os.path.join(root, f)\n\
-          \            rel = os.path.relpath(local_path, model.path)\n           \
-          \ blob = bucket.blob(prefix + rel)\n            blob.upload_from_filename(local_path)\n\
-          \            uploaded += 1\n\n    return {\"uploaded_files\": int(uploaded),\
-          \ \"gcs_prefix\": f\"gs://{bucket_name}/{prefix}\"}\n\n"
+          \ dict:\n    import os\n    from google.cloud import storage\n    client,\
+          \ bucket = storage.Client(), storage.Client().bucket(bucket_name)\n    prefix,\
+          \ uploaded = \"retrained_bert/\", 0\n    for root, _, files in os.walk(model.path):\n\
+          \        for f in files:\n            local_path, rel = os.path.join(root,\
+          \ f), os.path.relpath(os.path.join(root, f), model.path)\n            blob\
+          \ = bucket.blob(prefix + rel); blob.upload_from_filename(local_path); uploaded\
+          \ += 1\n    return {\"uploaded_files\": int(uploaded), \"gcs_prefix\": f\"\
+          gs://{bucket_name}/{prefix}\"}\n\n"
         image: python:3.10
     exec-extract-training-data:
       container:
@@ -161,28 +160,25 @@ deploymentSpec:
           \ *\n\ndef extract_training_data(\n    project_id: str,\n    dataset_name:\
           \ str,\n    days_back: int,\n    output_data: Output[Dataset],\n) -> dict:\n\
           \    \"\"\"Query recent predictions from BigQuery and write a CSV for the\
-          \ next step.\n    Returns JSON-serializable stats (no NaN).\"\"\"\n    import\
-          \ math\n    import pandas as pd\n    from google.cloud import bigquery\n\
-          \n    client = bigquery.Client(project=project_id)\n\n    query = f\"\"\"\
-          \n    SELECT\n      review_text,\n      predicted_sentiment,\n      confidence,\n\
-          \      timestamp\n    FROM `{project_id}.{dataset_name}.prediction_history`\n\
+          \ next step.\"\"\"\n    import math\n    import pandas as pd\n    from google.cloud\
+          \ import bigquery\n\n    client = bigquery.Client(project=project_id)\n\n\
+          \    query = f\"\"\"\n    SELECT\n      review_text,\n      predicted_sentiment,\n\
+          \      confidence,\n      timestamp\n    FROM `{project_id}.{dataset_name}.prediction_history`\n\
           \    WHERE TIMESTAMP(timestamp) >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL\
           \ {days_back} DAY)\n    ORDER BY timestamp DESC\n    LIMIT 10000\n    \"\
-          \"\"\n    print(\"Executing query:\")\n    print(query)\n\n    df = client.query(query).to_dataframe(create_bqstorage_client=True)\n\
+          \"\"\n\n    df = client.query(query).to_dataframe(create_bqstorage_client=True)\n\
           \n    if df.empty:\n        df = pd.DataFrame(columns=[\"review_text\",\
           \ \"predicted_sentiment\", \"confidence\", \"timestamp\"])\n        df.to_csv(output_data.path,\
-          \ index=False)\n        return {\n            \"total_samples\": 0,\n  \
-          \          \"sentiment_distribution\": {},\n            \"avg_confidence\"\
-          : 0.0,\n        }\n\n    df[\"confidence\"] = pd.to_numeric(df.get(\"confidence\"\
-          ), errors=\"coerce\")\n    avg_conf = df[\"confidence\"].mean(skipna=True)\n\
-          \    if avg_conf is None or (isinstance(avg_conf, float) and math.isnan(avg_conf)):\n\
-          \        avg_conf = 0.0\n\n    df.to_csv(output_data.path, index=False)\n\
-          \n    dist = (\n        df[\"predicted_sentiment\"]\n        .fillna(\"\
-          Unknown\")\n        .value_counts(dropna=False)\n        .to_dict()\n  \
-          \  )\n\n    stats = {\n        \"total_samples\": int(len(df)),\n      \
-          \  \"sentiment_distribution\": {str(k): int(v) for k, v in dist.items()},\n\
-          \        \"avg_confidence\": float(avg_conf),\n    }\n    print(f\"Output\
-          \ stats: {stats}\")\n    return stats\n\n"
+          \ index=False)\n        return {\"total_samples\": 0, \"sentiment_distribution\"\
+          : {}, \"avg_confidence\": 0.0}\n\n    # NaN-safe\n    df[\"confidence\"\
+          ] = pd.to_numeric(df.get(\"confidence\"), errors=\"coerce\")\n    avg_conf\
+          \ = df[\"confidence\"].mean(skipna=True)\n    if avg_conf is None or (isinstance(avg_conf,\
+          \ float) and math.isnan(avg_conf)):\n        avg_conf = 0.0\n\n    df.to_csv(output_data.path,\
+          \ index=False)\n    dist = df[\"predicted_sentiment\"].fillna(\"Unknown\"\
+          ).value_counts(dropna=False).to_dict()\n\n    return {\n        \"total_samples\"\
+          : int(len(df)),\n        \"sentiment_distribution\": {str(k): int(v) for\
+          \ k, v in dist.items()},\n        \"avg_confidence\": float(avg_conf),\n\
+          \    }\n\n"
         image: python:3.10
     exec-prepare-training-data:
       container:
@@ -213,7 +209,7 @@ deploymentSpec:
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef prepare_training_data(\n    input_data: Input[Dataset],\n   \
           \ train_data: Output[Dataset],\n    val_data: Output[Dataset],\n) -> dict:\n\
-          \    \"\"\"Clean, label-encode, and split into train/val with safe fallbacks.\"\
+          \    \"\"\"Clean, label-encode, and split train/val with safe fallbacks.\"\
           \"\"\n    import pandas as pd\n    from sklearn.model_selection import train_test_split\n\
           \n    df = pd.read_csv(input_data.path)\n    if df.empty:\n        df.to_csv(train_data.path,\
           \ index=False)\n        df.to_csv(val_data.path, index=False)\n        return\
@@ -223,12 +219,12 @@ deploymentSpec:
           review_text\", \"label\"])\n\n    if df.empty or df[\"label\"].nunique()\
           \ < 2 or df[\"label\"].value_counts().min() < 2:\n        train_df, val_df\
           \ = train_test_split(df, test_size=0.2, random_state=42)\n    else:\n  \
-          \      train_df, val_df = train_test_split(\n            df, test_size=0.2,\
-          \ random_state=42, stratify=df[\"label\"]\n        )\n\n    train_df.to_csv(train_data.path,\
-          \ index=False)\n    val_df.to_csv(val_data.path, index=False)\n\n    classes\
-          \ = sorted(df[\"label\"].unique().tolist())\n    return {\n        \"train_samples\"\
-          : int(len(train_df)),\n        \"val_samples\": int(len(val_df)),\n    \
-          \    \"classes\": [int(c) for c in classes],\n    }\n\n"
+          \      train_df, val_df = train_test_split(df, test_size=0.2, random_state=42,\
+          \ stratify=df[\"label\"])\n\n    train_df.to_csv(train_data.path, index=False)\n\
+          \    val_df.to_csv(val_data.path, index=False)\n\n    classes = sorted(df[\"\
+          label\"].unique().tolist())\n    return {\n        \"train_samples\": int(len(train_df)),\n\
+          \        \"val_samples\": int(len(val_df)),\n        \"classes\": [int(c)\
+          \ for c in classes],\n    }\n\n"
         image: python:3.10
     exec-retrain-bert-model:
       container:
@@ -260,64 +256,57 @@ deploymentSpec:
         - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
           \ *\n\ndef retrain_bert_model(\n    train_data: Input[Dataset],\n    val_data:\
           \ Input[Dataset],\n    base_model_path: str,\n    model_output: Output[Model],\n\
-          \    metrics_output: Output[Metrics],\n) -> dict:\n    \"\"\"Fine-tune a\
-          \ BERT classifier. If no/low data, just copy base model.\"\"\"\n    import\
-          \ os\n    import pandas as pd\n    from sklearn.metrics import accuracy_score,\
+          \    metrics_output: Output[Metrics],\n) -> dict:\n    \"\"\"Fine-tune BERT\
+          \ or fallback to base model if too little data.\"\"\"\n    import os\n \
+          \   import pandas as pd\n    from sklearn.metrics import accuracy_score,\
           \ precision_recall_fscore_support\n    from transformers import (\n    \
-          \    AutoTokenizer,\n        AutoModelForSequenceClassification,\n     \
-          \   Trainer,\n        TrainingArguments,\n        DataCollatorWithPadding,\n\
-          \    )\n    from torch.utils.data import Dataset\n\n    train_df = pd.read_csv(train_data.path)\
-          \ if os.path.exists(train_data.path) else pd.DataFrame()\n    val_df = pd.read_csv(val_data.path)\
-          \ if os.path.exists(val_data.path) else pd.DataFrame()\n\n    too_small\
-          \ = train_df.empty or len(train_df) < 10 or \"label\" not in train_df.columns\n\
-          \    if too_small:\n        print(\"Not enough data to train. Exporting\
-          \ base model as-is.\")\n        tokenizer = AutoTokenizer.from_pretrained(base_model_path)\n\
+          \    AutoTokenizer, AutoModelForSequenceClassification, Trainer, TrainingArguments,\
+          \ DataCollatorWithPadding\n    )\n    from torch.utils.data import Dataset\n\
+          \n    train_df = pd.read_csv(train_data.path) if os.path.exists(train_data.path)\
+          \ else pd.DataFrame()\n    val_df = pd.read_csv(val_data.path) if os.path.exists(val_data.path)\
+          \ else pd.DataFrame()\n\n    if train_df.empty or len(train_df) < 10 or\
+          \ \"label\" not in train_df.columns:\n        tokenizer = AutoTokenizer.from_pretrained(base_model_path)\n\
           \        model = AutoModelForSequenceClassification.from_pretrained(base_model_path,\
           \ num_labels=3)\n        os.makedirs(model_output.path, exist_ok=True)\n\
           \        tokenizer.save_pretrained(model_output.path)\n        model.save_pretrained(model_output.path)\n\
           \        metrics_output.log_metric(\"accuracy\", 0.0)\n        return {\"\
           trained\": False, \"train_rows\": int(len(train_df))}\n\n    class SentimentDataset(Dataset):\n\
           \        def __init__(self, texts, labels, tokenizer, max_length=128):\n\
-          \            self.texts = texts\n            self.labels = labels\n    \
-          \        self.tokenizer = tokenizer\n            self.max_length = max_length\n\
-          \n        def __len__(self):\n            return len(self.texts)\n\n   \
-          \     def __getitem__(self, idx):\n            item = self.tokenizer(\n\
-          \                str(self.texts.iloc[idx]),\n                truncation=True,\n\
-          \                padding=\"max_length\",\n                max_length=self.max_length,\n\
-          \                return_tensors=\"pt\",\n            )\n            return\
-          \ {\n                \"input_ids\": item[\"input_ids\"].squeeze(0),\n  \
-          \              \"attention_mask\": item[\"attention_mask\"].squeeze(0),\n\
-          \                \"labels\": int(self.labels.iloc[idx]),\n            }\n\
+          \            self.texts, self.labels, self.tokenizer, self.max_length =\
+          \ texts, labels, tokenizer, max_length\n\n        def __len__(self): return\
+          \ len(self.texts)\n        def __getitem__(self, idx):\n            item\
+          \ = self.tokenizer(\n                str(self.texts.iloc[idx]), truncation=True,\
+          \ padding=\"max_length\",\n                max_length=self.max_length, return_tensors=\"\
+          pt\"\n            )\n            return {\"input_ids\": item[\"input_ids\"\
+          ].squeeze(0),\n                    \"attention_mask\": item[\"attention_mask\"\
+          ].squeeze(0),\n                    \"labels\": int(self.labels.iloc[idx])}\n\
           \n    tokenizer = AutoTokenizer.from_pretrained(base_model_path)\n    model\
           \ = AutoModelForSequenceClassification.from_pretrained(base_model_path,\
-          \ num_labels=3)\n\n    train_dataset = SentimentDataset(train_df[\"review_text\"\
+          \ num_labels=3)\n    train_dataset = SentimentDataset(train_df[\"review_text\"\
           ], train_df[\"label\"], tokenizer)\n    val_dataset = SentimentDataset(val_df[\"\
           review_text\"], val_df[\"label\"], tokenizer)\n\n    def compute_metrics(eval_pred):\n\
           \        logits, labels = eval_pred\n        preds = logits.argmax(axis=-1)\n\
-          \        precision, recall, f1, _ = precision_recall_fscore_support(\n \
-          \           labels, preds, average=\"weighted\", zero_division=0\n     \
-          \   )\n        acc = accuracy_score(labels, preds)\n        return {\"accuracy\"\
-          : acc, \"f1\": f1, \"precision\": precision, \"recall\": recall}\n\n   \
-          \ args = TrainingArguments(\n        output_dir=\"/tmp/retrained_model\"\
-          ,\n        num_train_epochs=1,\n        per_device_train_batch_size=8,\n\
-          \        per_device_eval_batch_size=8,\n        logging_steps=10,\n    \
-          \    evaluation_strategy=\"epoch\",\n        save_strategy=\"epoch\",\n\
-          \        load_best_model_at_end=True,\n        metric_for_best_model=\"\
-          accuracy\",\n        report_to=\"none\",\n    )\n\n    trainer = Trainer(\n\
-          \        model=model,\n        args=args,\n        train_dataset=train_dataset,\n\
-          \        eval_dataset=val_dataset,\n        tokenizer=tokenizer,\n     \
-          \   data_collator=DataCollatorWithPadding(tokenizer),\n        compute_metrics=compute_metrics,\n\
-          \    )\n\n    trainer.train()\n    eval_metrics = trainer.evaluate()\n\n\
-          \    os.makedirs(model_output.path, exist_ok=True)\n    tokenizer.save_pretrained(model_output.path)\n\
-          \    model.save_pretrained(model_output.path)\n\n    for k, v in eval_metrics.items():\n\
-          \        try:\n            metrics_output.log_metric(k, float(v))\n    \
-          \    except Exception:\n            pass\n\n    return {\n        \"trained\"\
-          : True,\n        \"train_rows\": int(len(train_df)),\n        \"val_rows\"\
-          : int(len(val_df)),\n        \"accuracy\": float(eval_metrics.get(\"eval_accuracy\"\
-          , 0.0)),\n    }\n\n"
+          \        precision, recall, f1, _ = precision_recall_fscore_support(labels,\
+          \ preds, average=\"weighted\", zero_division=0)\n        acc = accuracy_score(labels,\
+          \ preds)\n        return {\"accuracy\": acc, \"f1\": f1, \"precision\":\
+          \ precision, \"recall\": recall}\n\n    args = TrainingArguments(\n    \
+          \    output_dir=\"/tmp/retrained_model\", num_train_epochs=1,\n        per_device_train_batch_size=8,\
+          \ per_device_eval_batch_size=8,\n        evaluation_strategy=\"epoch\",\
+          \ save_strategy=\"epoch\",\n        load_best_model_at_end=True, metric_for_best_model=\"\
+          accuracy\", report_to=\"none\"\n    )\n\n    trainer = Trainer(model=model,\
+          \ args=args, train_dataset=train_dataset,\n                      eval_dataset=val_dataset,\
+          \ tokenizer=tokenizer,\n                      data_collator=DataCollatorWithPadding(tokenizer),\n\
+          \                      compute_metrics=compute_metrics)\n\n    trainer.train()\n\
+          \    eval_metrics = trainer.evaluate()\n\n    os.makedirs(model_output.path,\
+          \ exist_ok=True)\n    tokenizer.save_pretrained(model_output.path)\n   \
+          \ model.save_pretrained(model_output.path)\n\n    for k, v in eval_metrics.items():\n\
+          \        try: metrics_output.log_metric(k, float(v))\n        except Exception:\
+          \ pass\n\n    return {\"trained\": True, \"train_rows\": int(len(train_df)),\
+          \ \"val_rows\": int(len(val_df)),\n            \"accuracy\": float(eval_metrics.get(\"\
+          eval_accuracy\", 0.0))}\n\n"
         image: python:3.10
 pipelineInfo:
-  name: bert-sentiment-retraining-pipeline
+  name: bert-sentiment-retraining-pipeline-v2
 root:
   dag:
     tasks:

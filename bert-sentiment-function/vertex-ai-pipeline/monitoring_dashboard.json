@@ -1,0 +1,203 @@
+{
+    "displayName": "BERT Sentiment Analysis Pipeline Dashboard",
+    "gridLayout": {
+        "widgets": [
+            {
+                "title": "Prediction Volume by Sentiment",
+                "xyChart": {
+                    "dataSets": [
+                        {
+                            "timeSeriesQuery": {
+                                "timeSeriesFilter": {
+                                    "filter": "resource.type=\"global\" AND metric.type=\"custom.googleapis.com/bert/prediction_count\"",
+                                    "aggregation": {
+                                        "alignmentPeriod": "60s",
+                                        "perSeriesAligner": "ALIGN_RATE",
+                                        "crossSeriesReducer": "REDUCE_SUM",
+                                        "groupByFields": [
+                                            "metric.label.sentiment"
+                                        ]
+                                    }
+                                }
+                            },
+                            "plotType": "LINE",
+                            "targetAxis": "Y1"
+                        }
+                    ],
+                    "timeshiftDuration": "0s",
+                    "yAxis": {
+                        "label": "Predictions/min",
+                        "scale": "LINEAR"
+                    }
+                }
+            },
+            {
+                "title": "Average Confidence Score",
+                "xyChart": {
+                    "dataSets": [
+                        {
+                            "timeSeriesQuery": {
+                                "timeSeriesFilter": {
+                                    "filter": "resource.type=\"global\" AND metric.type=\"custom.googleapis.com/bert/confidence_score\"",
+                                    "aggregation": {
+                                        "alignmentPeriod": "300s",
+                                        "perSeriesAligner": "ALIGN_MEAN",
+                                        "crossSeriesReducer": "REDUCE_MEAN",
+                                        "groupByFields": [
+                                            "metric.label.sentiment"
+                                        ]
+                                    }
+                                }
+                            },
+                            "plotType": "LINE",
+                            "targetAxis": "Y1"
+                        }
+                    ],
+                    "timeshiftDuration": "0s",
+                    "yAxis": {
+                        "label": "Confidence",
+                        "scale": "LINEAR"
+                    },
+                    "thresholds": [
+                        {
+                            "value": 0.7,
+                            "label": "Low Confidence Threshold"
+                        }
+                    ]
+                }
+            },
+            {
+                "title": "Processing Time",
+                "xyChart": {
+                    "dataSets": [
+                        {
+                            "timeSeriesQuery": {
+                                "timeSeriesFilter": {
+                                    "filter": "resource.type=\"global\" AND metric.type=\"custom.googleapis.com/bert/processing_time\"",
+                                    "aggregation": {
+                                        "alignmentPeriod": "60s",
+                                        "perSeriesAligner": "ALIGN_MEAN",
+                                        "crossSeriesReducer": "REDUCE_MEAN"
+                                    }
+                                }
+                            },
+                            "plotType": "LINE",
+                            "targetAxis": "Y1"
+                        }
+                    ],
+                    "timeshiftDuration": "0s",
+                    "yAxis": {
+                        "label": "Seconds",
+                        "scale": "LINEAR"
+                    }
+                }
+            },
+            {
+                "title": "Model Drift Detection",
+                "xyChart": {
+                    "dataSets": [
+                        {
+                            "timeSeriesQuery": {
+                                "timeSeriesFilter": {
+                                    "filter": "resource.type=\"global\" AND metric.type=\"custom.googleapis.com/bert/avg_confidence\"",
+                                    "aggregation": {
+                                        "alignmentPeriod": "3600s",
+                                        "perSeriesAligner": "ALIGN_MEAN",
+                                        "crossSeriesReducer": "REDUCE_MEAN"
+                                    }
+                                }
+                            },
+                            "plotType": "LINE",
+                            "targetAxis": "Y1"
+                        }
+                    ],
+                    "timeshiftDuration": "0s",
+                    "yAxis": {
+                        "label": "Average Confidence",
+                        "scale": "LINEAR"
+                    },
+                    "thresholds": [
+                        {
+                            "value": 0.65,
+                            "label": "Drift Threshold"
+                        }
+                    ]
+                }
+            },
+            {
+                "title": "Sentiment Distribution (24h)",
+                "pieChart": {
+                    "dataSets": [
+                        {
+                            "timeSeriesQuery": {
+                                "timeSeriesFilter": {
+                                    "filter": "resource.type=\"global\" AND metric.type=\"custom.googleapis.com/bert/prediction_count\"",
+                                    "aggregation": {
+                                        "alignmentPeriod": "86400s",
+                                        "perSeriesAligner": "ALIGN_SUM",
+                                        "crossSeriesReducer": "REDUCE_SUM",
+                                        "groupByFields": [
+                                            "metric.label.sentiment"
+                                        ]
+                                    }
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            {
+                "title": "Error Rate",
+                "xyChart": {
+                    "dataSets": [
+                        {
+                            "timeSeriesQuery": {
+                                "timeSeriesFilter": {
+                                    "filter": "resource.type=\"global\" AND metric.type=\"custom.googleapis.com/bert/error_count\"",
+                                    "aggregation": {
+                                        "alignmentPeriod": "300s",
+                                        "perSeriesAligner": "ALIGN_RATE",
+                                        "crossSeriesReducer": "REDUCE_SUM"
+                                    }
+                                }
+                            },
+                            "plotType": "LINE",
+                            "targetAxis": "Y1"
+                        }
+                    ],
+                    "timeshiftDuration": "0s",
+                    "yAxis": {
+                        "label": "Errors/min",
+                        "scale": "LINEAR"
+                    }
+                }
+            },
+            {
+                "title": "Retraining Events",
+                "xyChart": {
+                    "dataSets": [
+                        {
+                            "timeSeriesQuery": {
+                                "timeSeriesFilter": {
+                                    "filter": "resource.type=\"global\" AND metric.type=\"custom.googleapis.com/bert/drift_detected\"",
+                                    "aggregation": {
+                                        "alignmentPeriod": "3600s",
+                                        "perSeriesAligner": "ALIGN_SUM",
+                                        "crossSeriesReducer": "REDUCE_SUM"
+                                    }
+                                }
+                            },
+                            "plotType": "STACKED_BAR",
+                            "targetAxis": "Y1"
+                        }
+                    ],
+                    "timeshiftDuration": "0s",
+                    "yAxis": {
+                        "label": "Drift Events",
+                        "scale": "LINEAR"
+                    }
+                }
+            }
+        ]
+    }
+}

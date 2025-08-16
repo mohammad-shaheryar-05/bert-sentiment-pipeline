@@ -1,0 +1,5 @@
+# Final, compatible requirements for the Composer environment
+google-cloud-bigquery==3.17.0
+google-cloud-vertex-ai==1.34.0
+transformers==4.30.0
+protobuf==3.20.3

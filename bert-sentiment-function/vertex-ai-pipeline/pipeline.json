@@ -1,0 +1,309 @@
+{
+  "components": {
+    "comp-deploy-model-component": {
+      "executorLabel": "exec-deploy-model-component",
+      "inputDefinitions": {
+        "artifacts": {
+          "model": {
+            "artifactType": {
+              "schemaTitle": "system.Model",
+              "schemaVersion": "0.0.1"
+            }
+          }
+        },
+        "parameters": {
+          "project_id": {
+            "parameterType": "STRING"
+          },
+          "region": {
+            "defaultValue": "us-central1",
+            "isOptional": true,
+            "parameterType": "STRING"
+          }
+        }
+      }
+    },
+    "comp-extract-training-data-component": {
+      "executorLabel": "exec-extract-training-data-component",
+      "inputDefinitions": {
+        "parameters": {
+          "dataset_name": {
+            "parameterType": "STRING"
+          },
+          "days_back": {
+            "parameterType": "NUMBER_INTEGER"
+          },
+          "project_id": {
+            "parameterType": "STRING"
+          }
+        }
+      },
+      "outputDefinitions": {
+        "artifacts": {
+          "output_data": {
+            "artifactType": {
+              "schemaTitle": "system.Dataset",
+              "schemaVersion": "0.0.1"
+            }
+          }
+        }
+      }
+    },
+    "comp-prepare-training-data-component": {
+      "executorLabel": "exec-prepare-training-data-component",
+      "inputDefinitions": {
+        "artifacts": {
+          "raw_data": {
+            "artifactType": {
+              "schemaTitle": "system.Dataset",
+              "schemaVersion": "0.0.1"
+            }
+          }
+        }
+      },
+      "outputDefinitions": {
+        "artifacts": {
+          "prepared_data": {
+            "artifactType": {
+              "schemaTitle": "system.Dataset",
+              "schemaVersion": "0.0.1"
+            }
+          }
+        }
+      }
+    },
+    "comp-retrain-bert-model-component": {
+      "executorLabel": "exec-retrain-bert-model-component",
+      "inputDefinitions": {
+        "artifacts": {
+          "prepared_data": {
+            "artifactType": {
+              "schemaTitle": "system.Dataset",
+              "schemaVersion": "0.0.1"
+            }
+          }
+        }
+      },
+      "outputDefinitions": {
+        "artifacts": {
+          "model_output": {
+            "artifactType": {
+              "schemaTitle": "system.Model",
+              "schemaVersion": "0.0.1"
+            }
+          }
+        }
+      }
+    }
+  },
+  "defaultPipelineRoot": "gs://ms-gcu-dissertation-bert-predictions/pipeline-artifacts",
+  "deploymentSpec": {
+    "executors": {
+      "exec-deploy-model-component": {
+        "container": {
+          "args": [
+            "--executor_input",
+            "{{$}}",
+            "--function_to_execute",
+            "deploy_model_component"
+          ],
+          "command": [
+            "sh",
+            "-c",
+            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'google-cloud-aiplatform'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
+            "sh",
+            "-ec",
+            "program_path=$(mktemp -d)\n\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\n_KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
+            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef deploy_model_component(\n    model: Input[Model],\n    project_id: str,\n    region: str = \"us-central1\",\n):\n    from google.cloud import aiplatform\n    aiplatform.init(project=project_id, location=region)\n\n    deployed_model = aiplatform.Model.upload(\n        display_name=\"bert-sentiment-retrained\",\n        artifact_uri=model.path,\n        serving_container_image_uri=\"us-docker.pkg.dev/vertex-ai/prediction/pytorch-gpu.1-13:latest\",\n    )\n\n    endpoint = deployed_model.deploy(\n        machine_type=\"n1-standard-4\",\n        min_replica_count=1,\n        max_replica_count=1,\n    )\n\n    print(f\"\u2705 Model deployed at endpoint: {endpoint.resource_name}\")\n\n"
+          ],
+          "image": "python:3.10"
+        }
+      },
+      "exec-extract-training-data-component": {
+        "container": {
+          "args": [
+            "--executor_input",
+            "{{$}}",
+            "--function_to_execute",
+            "extract_training_data_component"
+          ],
+          "command": [
+            "sh",
+            "-c",
+            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'google-cloud-bigquery'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
+            "sh",
+            "-ec",
+            "program_path=$(mktemp -d)\n\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\n_KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
+            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef extract_training_data_component(\n    project_id: str,\n    dataset_name: str,\n    days_back: int,\n    output_data: Output[Dataset],\n):\n    from pipeline import extract_training_data\n    extract_training_data(\n        project_id=project_id,\n        dataset_name=dataset_name,\n        days_back=days_back,\n        output_path=output_data.path,\n    )\n\n"
+          ],
+          "image": "python:3.10"
+        }
+      },
+      "exec-prepare-training-data-component": {
+        "container": {
+          "args": [
+            "--executor_input",
+            "{{$}}",
+            "--function_to_execute",
+            "prepare_training_data_component"
+          ],
+          "command": [
+            "sh",
+            "-c",
+            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'pandas'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
+            "sh",
+            "-ec",
+            "program_path=$(mktemp -d)\n\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\n_KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
+            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef prepare_training_data_component(\n    raw_data: Input[Dataset],\n    prepared_data: Output[Dataset],\n):\n    import pandas as pd\n    import json\n\n    with open(raw_data.path, \"r\") as f:\n        raw = json.load(f)\n\n    df = pd.DataFrame(list(raw[\"sentiment_distribution\"].items()), columns=[\"sentiment\", \"count\"])\n    df[\"normalized\"] = df[\"count\"] / df[\"count\"].sum()\n\n    df.to_csv(prepared_data.path, index=False)\n    print(f\"\u2705 Prepared training data saved to {prepared_data.path}\")\n\n"
+          ],
+          "image": "python:3.10"
+        }
+      },
+      "exec-retrain-bert-model-component": {
+        "container": {
+          "args": [
+            "--executor_input",
+            "{{$}}",
+            "--function_to_execute",
+            "retrain_bert_model_component"
+          ],
+          "command": [
+            "sh",
+            "-c",
+            "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet --no-warn-script-location 'transformers' 'torch' 'pandas'  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"$0\" \"$@\"\n",
+            "sh",
+            "-ec",
+            "program_path=$(mktemp -d)\n\nprintf \"%s\" \"$0\" > \"$program_path/ephemeral_component.py\"\n_KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         \"$program_path/ephemeral_component.py\"                         \"$@\"\n",
+            "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import *\n\ndef retrain_bert_model_component(\n    prepared_data: Input[Dataset],\n    model_output: Output[Model],\n):\n    import pandas as pd\n    from transformers import BertForSequenceClassification\n\n    df = pd.read_csv(prepared_data.path)\n    print(\"Sample of training data:\", df.head())\n\n    # Dummy retraining (replace with real fine-tuning)\n    model = BertForSequenceClassification.from_pretrained(\"bert-base-uncased\", num_labels=3)\n    model.save_pretrained(model_output.path)\n\n    print(f\"\u2705 Model retrained and saved to {model_output.path}\")\n\n"
+          ],
+          "image": "python:3.10"
+        }
+      }
+    }
+  },
+  "pipelineInfo": {
+    "name": "bert-sentiment-retraining-pipeline"
+  },
+  "root": {
+    "dag": {
+      "tasks": {
+        "deploy-model-component": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-deploy-model-component"
+          },
+          "dependentTasks": [
+            "retrain-bert-model-component"
+          ],
+          "inputs": {
+            "artifacts": {
+              "model": {
+                "taskOutputArtifact": {
+                  "outputArtifactKey": "model_output",
+                  "producerTask": "retrain-bert-model-component"
+                }
+              }
+            },
+            "parameters": {
+              "project_id": {
+                "componentInputParameter": "project_id"
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "deploy-model-component"
+          }
+        },
+        "extract-training-data-component": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-extract-training-data-component"
+          },
+          "inputs": {
+            "parameters": {
+              "dataset_name": {
+                "runtimeValue": {
+                  "constant": "bert_predictions"
+                }
+              },
+              "days_back": {
+                "runtimeValue": {
+                  "constant": 30.0
+                }
+              },
+              "project_id": {
+                "componentInputParameter": "project_id"
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "extract-training-data-component"
+          }
+        },
+        "prepare-training-data-component": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-prepare-training-data-component"
+          },
+          "dependentTasks": [
+            "extract-training-data-component"
+          ],
+          "inputs": {
+            "artifacts": {
+              "raw_data": {
+                "taskOutputArtifact": {
+                  "outputArtifactKey": "output_data",
+                  "producerTask": "extract-training-data-component"
+                }
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "prepare-training-data-component"
+          }
+        },
+        "retrain-bert-model-component": {
+          "cachingOptions": {
+            "enableCache": true
+          },
+          "componentRef": {
+            "name": "comp-retrain-bert-model-component"
+          },
+          "dependentTasks": [
+            "prepare-training-data-component"
+          ],
+          "inputs": {
+            "artifacts": {
+              "prepared_data": {
+                "taskOutputArtifact": {
+                  "outputArtifactKey": "prepared_data",
+                  "producerTask": "prepare-training-data-component"
+                }
+              }
+            }
+          },
+          "taskInfo": {
+            "name": "retrain-bert-model-component"
+          }
+        }
+      }
+    },
+    "inputDefinitions": {
+      "parameters": {
+        "project_id": {
+          "defaultValue": "ms-gcu-dissertation",
+          "isOptional": true,
+          "parameterType": "STRING"
+        }
+      }
+    }
+  },
+  "schemaVersion": "2.1.0",
+  "sdkVersion": "kfp-2.14.2"
+}

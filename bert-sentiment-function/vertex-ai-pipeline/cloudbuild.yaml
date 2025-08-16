@@ -1,0 +1,12 @@
+steps:
+- name: 'gcr.io/cloud-builders/gcloud'
+  args: [
+    'composer', 'environments', 'update', 'bert-pipeline-composer',
+    '--location=us-central1',
+    '--update-pypi-packages-from-file=composer-requirements.txt'
+  ]
+  timeout: 2400s  # Increased timeout
+  env:
+    - 'CLOUDSDK_PYTHON=python3.10'  # Force Python 3.10 compatibility
+
+

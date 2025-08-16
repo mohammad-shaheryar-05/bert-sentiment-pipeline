@@ -1,0 +1,448 @@
+# PIPELINE DEFINITION
+# Name: bert-sentiment-retraining-pipeline-v7-final
+# Inputs:
+#    base_model_path: str [Default: 'bert-base-uncased']
+#    bucket_name: str [Default: 'ms-gcu-dissertation-bert-predictions']
+#    dataset_name: str [Default: 'bert_predictions']
+#    days_back: int [Default: 30.0]
+#    project_id: str [Default: 'ms-gcu-dissertation']
+components:
+  comp-clean-training-data-v7:
+    executorLabel: exec-clean-training-data-v7
+    inputDefinitions:
+      artifacts:
+        input_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        cleaned_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        Output:
+          parameterType: STRUCT
+  comp-deploy-model-to-gcs-v7:
+    executorLabel: exec-deploy-model-to-gcs-v7
+    inputDefinitions:
+      artifacts:
+        model:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        bucket_name:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        Output:
+          parameterType: STRUCT
+  comp-extract-training-data-v7:
+    executorLabel: exec-extract-training-data-v7
+    inputDefinitions:
+      parameters:
+        dataset_name:
+          parameterType: STRING
+        days_back:
+          parameterType: NUMBER_INTEGER
+        project_id:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        output_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        Output:
+          parameterType: STRUCT
+  comp-prepare-training-data-v7:
+    executorLabel: exec-prepare-training-data-v7
+    inputDefinitions:
+      artifacts:
+        input_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+    outputDefinitions:
+      artifacts:
+        train_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        val_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        Output:
+          parameterType: STRUCT
+  comp-retrain-bert-model-v7:
+    executorLabel: exec-retrain-bert-model-v7
+    inputDefinitions:
+      artifacts:
+        train_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+        val_data:
+          artifactType:
+            schemaTitle: system.Dataset
+            schemaVersion: 0.0.1
+      parameters:
+        base_model_path:
+          parameterType: STRING
+    outputDefinitions:
+      artifacts:
+        metrics_output:
+          artifactType:
+            schemaTitle: system.Metrics
+            schemaVersion: 0.0.1
+        model_output:
+          artifactType:
+            schemaTitle: system.Model
+            schemaVersion: 0.0.1
+      parameters:
+        Output:
+          parameterType: STRUCT
+deploymentSpec:
+  executors:
+    exec-clean-training-data-v7:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - clean_training_data_v7
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas>=2.0.0'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef clean_training_data_v7(\n    input_data: Input[Dataset],\n  \
+          \  cleaned_data: Output[Dataset],\n) -> dict:\n    import pandas as pd\n\
+          \    import re\n    df = pd.read_csv(input_data.path)\n    if df.empty:\n\
+          \        df.to_csv(cleaned_data.path, index=False)\n        return {\"rows_before\"\
+          : 0, \"rows_after\": 0}\n    rows_before = len(df)\n    df['review_text']\
+          \ = df['review_text'].astype(str).apply(lambda x: re.sub(r'[^A-Za-z0-9\\\
+          s.,?!]', '', x.lower()))\n    df.dropna(subset=['review_text'], inplace=True)\n\
+          \    df = df[df['review_text'].str.strip().astype(bool)]\n    rows_after\
+          \ = len(df)\n    df.to_csv(cleaned_data.path, index=False)\n    return {\"\
+          rows_before\": rows_before, \"rows_after\": rows_after}\n\n"
+        image: python:3.10
+    exec-deploy-model-to-gcs-v7:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - deploy_model_to_gcs_v7
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef deploy_model_to_gcs_v7(model: Input[Model], bucket_name: str)\
+          \ -> dict:\n    import os\n    from datetime import datetime\n    if not\
+          \ os.listdir(model.path) or \"placeholder.txt\" in os.listdir(model.path):\n\
+          \        return {\"uploaded\": False, \"gcs_path\": \"none\"}\n    model_gcs_path\
+          \ = f\"gs://{bucket_name}/models/retrained_bert_v7_{int(datetime.now().timestamp())}\"\
+          \n    os.system(f\"gsutil -m rsync -r {model.path} {model_gcs_path}\")\n\
+          \    return {\"uploaded\": True, \"gcs_path\": model_gcs_path}\n\n"
+        image: python:3.10
+    exec-extract-training-data-v7:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - extract_training_data_v7
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas>=2.0.0'\
+          \ 'google-cloud-bigquery>=3.11.0' 'google-cloud-bigquery-storage' 'db-dtypes'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef extract_training_data_v7(\n    project_id: str,\n    dataset_name:\
+          \ str,\n    days_back: int,\n    output_data: Output[Dataset],\n) -> dict:\n\
+          \    import math\n    import pandas as pd\n    from google.cloud import\
+          \ bigquery\n    client = bigquery.Client(project=project_id)\n    query\
+          \ = f\"\"\"\n    SELECT review_text, predicted_sentiment\n    FROM `{project_id}.{dataset_name}.prediction_history`\n\
+          \    WHERE timestamp >= DATETIME_SUB(CURRENT_DATETIME(), INTERVAL {days_back}\
+          \ DAY)\n    ORDER BY timestamp DESC LIMIT 20000\n    \"\"\"\n    df = client.query(query).to_dataframe()\n\
+          \    if df.empty:\n        df = pd.DataFrame(columns=[\"review_text\", \"\
+          predicted_sentiment\"])\n        df.to_csv(output_data.path, index=False)\n\
+          \        return {\"total_samples\": 0}\n    df.to_csv(output_data.path,\
+          \ index=False)\n    return {\"total_samples\": len(df)}\n\n"
+        image: python:3.10
+    exec-prepare-training-data-v7:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - prepare_training_data_v7
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'pandas>=2.0.0'\
+          \ 'scikit-learn>=1.3.0'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.14.2' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef prepare_training_data_v7(\n    input_data: Input[Dataset],\n\
+          \    train_data: Output[Dataset],\n    val_data: Output[Dataset],\n) ->\
+          \ dict:\n    import pandas as pd\n    from sklearn.model_selection import\
+          \ train_test_split\n    df = pd.read_csv(input_data.path)\n    if df.empty:\n\
+          \        df.to_csv(train_data.path, index=False)\n        df.to_csv(val_data.path,\
+          \ index=False)\n        return {\"train_samples\": 0, \"val_samples\": 0}\n\
+          \    label_map = {\"Positive\": 2, \"Neutral\": 1, \"Negative\": 0}\n  \
+          \  df[\"label\"] = df[\"predicted_sentiment\"].map(label_map)\n    df =\
+          \ df.dropna(subset=[\"review_text\", \"label\"])\n    df[\"label\"] = df[\"\
+          label\"].astype(int)\n    if df.empty or df[\"label\"].nunique() < 2 or\
+          \ df[\"label\"].value_counts().min() < 2:\n        train_df, val_df = train_test_split(df,\
+          \ test_size=0.2, random_state=42)\n    else:\n        train_df, val_df =\
+          \ train_test_split(df, test_size=0.2, random_state=42, stratify=df[\"label\"\
+          ])\n    train_df.to_csv(train_data.path, index=False)\n    val_df.to_csv(val_data.path,\
+          \ index=False)\n    return {\"train_samples\": len(train_df), \"val_samples\"\
+          : len(val_df)}\n\n"
+        image: python:3.10
+    exec-retrain-bert-model-v7:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - retrain_bert_model_v7
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.2'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef retrain_bert_model_v7(\n    train_data: Input[Dataset],\n   \
+          \ val_data: Input[Dataset],\n    base_model_path: str,\n    model_output:\
+          \ Output[Model],\n    metrics_output: Output[Metrics],\n) -> dict:\n   \
+          \ \"\"\"Fine-tune BERT with optimized hyperparameters.\"\"\"\n    # Note:\
+          \ All these imports are already in the base_image\n    import os\n    import\
+          \ pandas as pd\n    import torch\n    from transformers import AutoTokenizer,\
+          \ AutoModelForSequenceClassification, Trainer, TrainingArguments, DataCollatorWithPadding,\
+          \ IntervalStrategy\n    from torch.utils.data import Dataset as TorchDataset\n\
+          \    from sklearn.metrics import accuracy_score\n\n    train_df = pd.read_csv(train_data.path)\n\
+          \    val_df = pd.read_csv(val_data.path)\n    if train_df.empty or len(train_df)\
+          \ < 10:\n        print(\"Skipping training due to insufficient data.\")\n\
+          \        os.makedirs(model_output.path, exist_ok=True)\n        with open(os.path.join(model_output.path,\
+          \ \"placeholder.txt\"), \"w\") as f: f.write(\"No training.\")\n       \
+          \ metrics_output.log_metric(\"accuracy\", 0.0)\n        return {\"trained\"\
+          : False, \"accuracy\": 0.0}\n\n    class SentimentDataset(TorchDataset):\n\
+          \        def __init__(self, texts, labels, tokenizer): self.texts, self.labels,\
+          \ self.tokenizer = texts, labels, tokenizer\n        def __len__(self):\
+          \ return len(self.texts)\n        def __getitem__(self, idx):\n        \
+          \    item = self.tokenizer(str(self.texts.iloc[idx]), truncation=True, padding=\"\
+          max_length\", max_length=128, return_tensors=\"pt\")\n            return\
+          \ {\"input_ids\": item[\"input_ids\"].squeeze(0), \"attention_mask\": item[\"\
+          attention_mask\"].squeeze(0), \"labels\": int(self.labels.iloc[idx])}\n\n\
+          \    tokenizer = AutoTokenizer.from_pretrained(base_model_path)\n    model\
+          \ = AutoModelForSequenceClassification.from_pretrained(base_model_path,\
+          \ num_labels=3)\n    train_dataset = SentimentDataset(train_df[\"review_text\"\
+          ], train_df[\"label\"], tokenizer)\n    val_dataset = SentimentDataset(val_df[\"\
+          review_text\"], val_df[\"label\"], tokenizer)\n\n    def compute_metrics(p):\
+          \ return {\"accuracy\": accuracy_score(p.label_ids, p.predictions.argmax(-1))}\n\
+          \n    args = TrainingArguments(\n        output_dir=\"/tmp/model\",\n  \
+          \      evaluation_strategy=IntervalStrategy.EPOCH,\n        save_strategy=IntervalStrategy.EPOCH,\n\
+          \        num_train_epochs=3,\n        learning_rate=2e-5,\n        per_device_train_batch_size=16,\n\
+          \        per_device_eval_batch_size=16,\n        weight_decay=0.01,\n  \
+          \      load_best_model_at_end=True,\n        metric_for_best_model=\"accuracy\"\
+          ,\n        report_to=\"none\"\n    )\n\n    trainer = Trainer(model=model,\
+          \ args=args, train_dataset=train_dataset, eval_dataset=val_dataset, compute_metrics=compute_metrics,\
+          \ tokenizer=tokenizer, data_collator=DataCollatorWithPadding(tokenizer))\n\
+          \    trainer.train()\n    eval_metrics = trainer.evaluate()\n    model.save_pretrained(model_output.path)\n\
+          \    tokenizer.save_pretrained(model_output.path)\n    accuracy = eval_metrics.get(\"\
+          eval_accuracy\", 0.0)\n    metrics_output.log_metric(\"accuracy\", accuracy)\n\
+          \    return {\"trained\": True, \"accuracy\": accuracy}\n\n"
+        image: europe-docker.pkg.dev/vertex-ai/training/pytorch-gpu.1-13.py310:latest
+pipelineInfo:
+  name: bert-sentiment-retraining-pipeline-v7-final
+root:
+  dag:
+    tasks:
+      clean-training-data-v7:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-clean-training-data-v7
+        dependentTasks:
+        - extract-training-data-v7
+        inputs:
+          artifacts:
+            input_data:
+              taskOutputArtifact:
+                outputArtifactKey: output_data
+                producerTask: extract-training-data-v7
+        taskInfo:
+          name: clean-training-data-v7
+      deploy-model-to-gcs-v7:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-deploy-model-to-gcs-v7
+        dependentTasks:
+        - retrain-bert-model-v7
+        inputs:
+          artifacts:
+            model:
+              taskOutputArtifact:
+                outputArtifactKey: model_output
+                producerTask: retrain-bert-model-v7
+          parameters:
+            bucket_name:
+              componentInputParameter: bucket_name
+        taskInfo:
+          name: deploy-model-to-gcs-v7
+      extract-training-data-v7:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-extract-training-data-v7
+        inputs:
+          parameters:
+            dataset_name:
+              componentInputParameter: dataset_name
+            days_back:
+              componentInputParameter: days_back
+            project_id:
+              componentInputParameter: project_id
+        taskInfo:
+          name: extract-training-data-v7
+      prepare-training-data-v7:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-prepare-training-data-v7
+        dependentTasks:
+        - clean-training-data-v7
+        inputs:
+          artifacts:
+            input_data:
+              taskOutputArtifact:
+                outputArtifactKey: cleaned_data
+                producerTask: clean-training-data-v7
+        taskInfo:
+          name: prepare-training-data-v7
+      retrain-bert-model-v7:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-retrain-bert-model-v7
+        dependentTasks:
+        - prepare-training-data-v7
+        inputs:
+          artifacts:
+            train_data:
+              taskOutputArtifact:
+                outputArtifactKey: train_data
+                producerTask: prepare-training-data-v7
+            val_data:
+              taskOutputArtifact:
+                outputArtifactKey: val_data
+                producerTask: prepare-training-data-v7
+          parameters:
+            base_model_path:
+              componentInputParameter: base_model_path
+        taskInfo:
+          name: retrain-bert-model-v7
+  inputDefinitions:
+    parameters:
+      base_model_path:
+        defaultValue: bert-base-uncased
+        isOptional: true
+        parameterType: STRING
+      bucket_name:
+        defaultValue: ms-gcu-dissertation-bert-predictions
+        isOptional: true
+        parameterType: STRING
+      dataset_name:
+        defaultValue: bert_predictions
+        isOptional: true
+        parameterType: STRING
+      days_back:
+        defaultValue: 30.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      project_id:
+        defaultValue: ms-gcu-dissertation
+        isOptional: true
+        parameterType: STRING
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.14.2

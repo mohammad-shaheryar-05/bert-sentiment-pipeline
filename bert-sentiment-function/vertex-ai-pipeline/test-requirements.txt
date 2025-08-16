@@ -1,0 +1,1 @@
+google-cloud-vertex-ai>=1.36.0
